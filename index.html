@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live Tracking - Ultra Endurance</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    body { margin: 0; padding: 0; font-family: system-ui, sans-serif; }
+    #map { height: 100vh; width: 100vw; }
+    .status-box {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      z-index: 1000;
+      background: rgba(255, 255, 255, 0.95);
+      padding: 10px 14px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="status-box" id="statusBox">Memuat data pelacakan...</div>
+  <div id="map"></div>
+
+  <script>
+    const map = L.map('map').setView([-7.3334832, 109.2347925], 13);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    // 1. Muat Garis Rute GPX secara langsung (mendukung format <trkpt> dan <rtept>)
+    async function muatRuteGPX() {
+      try {
+        const res = await fetch('rute.gpx?t=' + new Date().getTime());
+        if (!res.ok) throw new Error('File rute.gpx tidak ditemukan');
+        const gpxText = await res.text();
+        
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(gpxText, 'text/xml');
+        
+        let points = xmlDoc.querySelectorAll('trkpt');
+        if (points.length === 0) {
+          points = xmlDoc.querySelectorAll('rtept');
+        }
+
+        const latlngs = [];
+        points.forEach(pt => {
+          const lat = parseFloat(pt.getAttribute('lat'));
+          const lon = parseFloat(pt.getAttribute('lon'));
+          if (!isNaN(lat) && !isNaN(lon)) {
+            latlngs.push([lat, lon]);
+          }
+        });
+
+        if (latlngs.length > 0) {
+          const polyline = L.polyline(latlngs, {
+            color: '#2563eb',
+            weight: 5,
+            opacity: 0.85
+          }).addTo(map);
+
+          L.circleMarker(latlngs[0], { radius: 6, color: '#16a34a', fillOpacity: 1 })
+            .addTo(map).bindPopup('<b>START</b>');
+          L.circleMarker(latlngs[latlngs.length - 1], { radius: 6, color: '#dc2626', fillOpacity: 1 })
+            .addTo(map).bindPopup('<b>FINISH</b>');
+
+          map.fitBounds(polyline.getBounds(), { padding: [30, 30] });
+        }
+      } catch (err) {
+        console.error('Gagal memuat rute.gpx:', err);
+      }
+    }
+
+    muatRuteGPX();
+
+    // 2. Muat & Perbarui Posisi Peserta Live dari lokasi.json
+    let marker;
+    const statusBox = document.getElementById('statusBox');
+
+    async function updatePosisi() {
+      try {
+        const res = await fetch('lokasi.json?t=' + new Date().getTime());
+        if (!res.ok) throw new Error('File lokasi.json belum ditemukan');
+        
+        const data = await res.json();
+        const lat = parseFloat(data.lat);
+        const lon = parseFloat(data.lon);
+        const id = data.id || 'CAPST';
+        const batt = data.batt !== undefined ? `${data.batt}%` : '-';
+
+        const infoPopup = `<b>ID Peserta:</b> ${id}<br><b>Baterai HP:</b> ${batt}<br><b>Koordinat:</b> ${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+
+        if (!marker) {
+          marker = L.marker([lat, lon]).addTo(map).bindPopup(infoPopup).openPopup();
+        } else {
+          marker.setLatLng([lat, lon]).setPopupContent(infoPopup);
+        }
+
+        statusBox.innerHTML = `
+          <b>Status:</b> Live Aktif<br>
+          <b>ID:</b> ${id} | <b>Baterai:</b> ${batt}<br>
+          <small>Cek terakhir: ${new Date().toLocaleTimeString('id-ID')}</small>
+        `;
+      } catch (err) {
+        statusBox.innerHTML = `<b>Status:</b> Menunggu data GPS dari HP...`;
+      }
+    }
+
+    updatePosisi();
+    setInterval(updatePosisi, 10000);
+  </script>
+</body>
+</html>
